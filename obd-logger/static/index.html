@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OBD Logger</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.24/dist/uPlot.min.css">
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.24/dist/uPlot.iife.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #e0e0e0; font-size: 14px; }
+
+  /* ── Header ── */
+  #header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 14px; background: #1a1a1a; border-bottom: 1px solid #333;
+  }
+  #status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  #status-dot.logging { background: #22c55e; }
+  #status-dot.paused  { background: #ef4444; }
+  #status-label { font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+  #toggle-btn {
+    padding: 4px 12px; border-radius: 4px; border: 1px solid #555; cursor: pointer;
+    background: #2a2a2a; color: #e0e0e0; font-size: 13px;
+  }
+  #toggle-btn:hover { background: #3a3a3a; }
+  #chips { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+  .chip {
+    background: #222; border: 1px solid #444; border-radius: 20px;
+    padding: 2px 10px; font-size: 12px; white-space: nowrap;
+  }
+  .chip span { font-weight: 600; color: #60a5fa; }
+
+  /* ── Tabs ── */
+  #tabs { display: flex; border-bottom: 1px solid #333; background: #141414; }
+  .tab-btn {
+    padding: 8px 20px; cursor: pointer; border: none; background: none;
+    color: #888; font-size: 14px; border-bottom: 2px solid transparent;
+  }
+  .tab-btn.active { color: #e0e0e0; border-bottom-color: #60a5fa; }
+
+  /* ── Tab panels ── */
+  .tab-panel { display: none; }
+  .tab-panel.active { display: flex; flex-direction: column; }
+
+  /* ── Chart area ── */
+  #chart-wrap, #sess-chart-wrap {
+    flex: 1; padding: 10px; overflow: hidden;
+  }
+  .uplot, .uplot canvas { width: 100% !important; }
+
+  /* ── Series toggles ── */
+  #series-toggles, #sess-series-toggles {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 8px 14px; border-top: 1px solid #222; background: #141414;
+  }
+  .toggle-pill {
+    display: flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 20px; border: 1px solid #444;
+    cursor: pointer; font-size: 12px; background: #1e1e1e; user-select: none;
+  }
+  .toggle-pill input { accent-color: #60a5fa; cursor: pointer; }
+
+  /* ── Sessions list ── */
+  #sessions-list { padding: 12px 14px; overflow-y: auto; }
+  .sess-card {
+    background: #1a1a1a; border: 1px solid #333; border-radius: 6px;
+    padding: 10px 14px; margin-bottom: 8px; display: flex;
+    justify-content: space-between; align-items: center; gap: 10px;
+    flex-wrap: wrap;
+  }
+  .sess-info { font-size: 13px; }
+  .sess-info .fn { font-weight: 600; font-family: monospace; color: #a3e635; }
+  .sess-info .meta { color: #888; font-size: 12px; margin-top: 2px; }
+  .sess-actions { display: flex; gap: 8px; }
+  .sess-actions a, .sess-actions button {
+    padding: 4px 12px; border-radius: 4px; border: 1px solid #555;
+    background: #2a2a2a; color: #e0e0e0; cursor: pointer; font-size: 13px;
+    text-decoration: none;
+  }
+  .sess-actions a:hover, .sess-actions button:hover { background: #3a3a3a; }
+
+  /* ── Sessions chart back button ── */
+  #back-btn {
+    margin: 8px 14px 0; padding: 4px 14px; border-radius: 4px; border: 1px solid #555;
+    background: #2a2a2a; color: #e0e0e0; cursor: pointer; font-size: 13px;
+    display: none; align-self: flex-start;
+  }
+  #back-btn:hover { background: #3a3a3a; }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div id="header">
+  <div id="status-dot" class="logging"></div>
+  <span id="status-label">LOGGING</span>
+  <button id="toggle-btn" onclick="toggleLogging()">Stop Logging</button>
+  <div id="chips">
+    <div class="chip">boost: <span id="chip-boost_actual">--</span> kPa</div>
+    <div class="chip">baro(SAE): <span id="chip-baro_sae">--</span> kPa</div>
+    <div class="chip">baro(ECU): <span id="chip-baro_ecu">--</span> kPa</div>
+    <div class="chip">vane: <span id="chip-vane_actual">--</span> %</div>
+  </div>
+</div>
+
+<!-- ── Tabs ── -->
+<div id="tabs">
+  <button class="tab-btn active" onclick="switchTab('live')">Live</button>
+  <button class="tab-btn" onclick="switchTab('sessions')">Sessions</button>
+</div>
+
+<!-- ── Live Tab ── -->
+<div id="tab-live" class="tab-panel active" style="height: calc(100vh - 105px);">
+  <div id="chart-wrap" style="flex:1; min-height:0;"></div>
+  <div id="series-toggles"></div>
+</div>
+
+<!-- ── Sessions Tab ── -->
+<div id="tab-sessions" class="tab-panel" style="height: calc(100vh - 105px);">
+  <button id="back-btn" onclick="showSessionsList()">&#8592; Back</button>
+  <div id="sessions-list"></div>
+  <div id="sess-chart-wrap" style="display:none; flex:1; min-height:0;"></div>
+  <div id="sess-series-toggles" style="display:none;"></div>
+</div>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const LIVE_WINDOW_SECONDS = 60;
+
+// Series definitions — order, label, unit, colour, y-axis group
+const SERIES_DEFS = [
+  { key: 'boost_actual',      label: 'Boost Actual',      unit: 'kPa',  color: '#60a5fa', axis: 'kPa_boost' },
+  { key: 'boost_desired',     label: 'Boost Desired',     unit: 'kPa',  color: '#93c5fd', axis: 'kPa_boost' },
+  { key: 'baro_sae',          label: 'Baro (SAE)',        unit: 'kPa',  color: '#34d399', axis: 'kPa_baro'  },
+  { key: 'baro_ecu',          label: 'Baro (ECU)',        unit: 'kPa',  color: '#6ee7b7', axis: 'kPa_baro'  },
+  { key: 'map',               label: 'MAP',               unit: 'kPa',  color: '#a78bfa', axis: 'kPa_baro'  },
+  { key: 'vane_actual',       label: 'Vane Actual',       unit: '%',    color: '#fb923c', axis: 'pct'       },
+  { key: 'vane_desired',      label: 'Vane Desired',      unit: '%',    color: '#fcd34d', axis: 'pct'       },
+  { key: 'throttle',          label: 'Throttle',          unit: '%',    color: '#f472b6', axis: 'pct'       },
+  { key: 'maf',               label: 'MAF',               unit: 'g/s',  color: '#e879f9', axis: 'maf'       },
+  { key: 'iat',               label: 'IAT',               unit: '°C',   color: '#f97316', axis: 'temp'      },
+  { key: 'coolant_temp',      label: 'Coolant Temp',      unit: '°C',   color: '#fbbf24', axis: 'temp'      },
+  { key: 'fuel_rail_actual',  label: 'Fuel Rail Actual',  unit: 'MPa',  color: '#38bdf8', axis: 'mpa'       },
+  { key: 'fuel_rail_desired', label: 'Fuel Rail Desired', unit: 'MPa',  color: '#7dd3fc', axis: 'mpa'       },
+  { key: 'inj_bal_cyl1',      label: 'Inj Bal Cyl 1',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl2',      label: 'Inj Bal Cyl 2',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl3',      label: 'Inj Bal Cyl 3',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl4',      label: 'Inj Bal Cyl 4',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl5',      label: 'Inj Bal Cyl 5',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl6',      label: 'Inj Bal Cyl 6',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl7',      label: 'Inj Bal Cyl 7',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl8',      label: 'Inj Bal Cyl 8',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+];
+
+// Which series are visible by default
+const DEFAULT_VISIBLE = new Set([
+  'boost_actual','boost_desired','baro_sae','baro_ecu',
+  'vane_actual','vane_desired','map'
+]);
+
+// ── State ──────────────────────────────────────────────────────────────────
+let liveChart = null;
+let sessChart = null;
+let liveData = null;   // { ts: [], s0: [], s1: [], ... }
+let liveES = null;
+let visible = {}; // key -> bool
+let isLogging = true;
+let currentTab = 'live';
+
+SERIES_DEFS.forEach(s => { visible[s.key] = DEFAULT_VISIBLE.has(s.key); });
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+function fmt(v, decimals = 1) {
+  return (v == null || isNaN(v)) ? '--' : Number(v).toFixed(decimals);
+}
+
+function chartHeight() {
+  const wrap = document.getElementById('chart-wrap');
+  return Math.max(200, wrap.clientHeight - 4);
+}
+
+function sessChartHeight() {
+  const wrap = document.getElementById('sess-chart-wrap');
+  return Math.max(200, wrap.clientHeight - 4);
+}
+
+// ── uPlot helpers ──────────────────────────────────────────────────────────
+function buildAxes() {
+  const axisKeys = [...new Set(SERIES_DEFS.map(s => s.axis))];
+  const axes = [
+    { label: 'Time', stroke: '#666', ticks: { stroke: '#333' }, grid: { stroke: '#222' } }
+  ];
+  const axisLabels = {
+    kPa_boost: 'kPa (boost)', kPa_baro: 'kPa (baro/MAP)', pct: '%',
+    maf: 'g/s', temp: '°C', mpa: 'MPa', mg: 'mg (bal)'
+  };
+  axisKeys.forEach((ak, i) => {
+    axes.push({
+      scale: ak, side: i % 2 === 0 ? 3 : 1,
+      label: axisLabels[ak] || ak,
+      stroke: '#666', ticks: { stroke: '#333' }, grid: { stroke: i === 0 ? '#222' : 'transparent' },
+      values: (u, vals) => vals.map(v => v == null ? '' : v.toFixed(1)),
+    });
+  });
+  return axes;
+}
+
+function buildScales() {
+  const scales = { x: { time: true } };
+  const axisKeys = [...new Set(SERIES_DEFS.map(s => s.axis))];
+  axisKeys.forEach(ak => { scales[ak] = {}; });
+  return scales;
+}
+
+function buildSeriesConfig(showSet) {
+  const cfg = [{}]; // x-series placeholder
+  SERIES_DEFS.forEach(s => {
+    cfg.push({
+      label: s.label,
+      stroke: s.color,
+      scale: s.axis,
+      show: showSet.has(s.key),
+      width: 1.5,
+      spanGaps: true,
+    });
+  });
+  return cfg;
+}
+
+function makeEmptyData() {
+  const d = [[]];
+  SERIES_DEFS.forEach(() => d.push([]));
+  return d;
+}
+
+// ── Live chart ─────────────────────────────────────────────────────────────
+function createLiveChart() {
+  if (liveChart) { liveChart.destroy(); liveChart = null; }
+  const wrap = document.getElementById('chart-wrap');
+  wrap.innerHTML = '';
+  liveData = makeEmptyData();
+
+  const showSet = new Set(SERIES_DEFS.filter(s => visible[s.key]).map(s => s.key));
+  liveChart = new uPlot({
+    width: wrap.clientWidth,
+    height: chartHeight(),
+    scales: buildScales(),
+    axes: buildAxes(),
+    series: buildSeriesConfig(showSet),
+    cursor: { sync: { key: 'live' } },
+  }, liveData, wrap);
+}
+
+function appendLiveEntry(entry) {
+  const ts = entry.ts;
+  if (!ts) return;
+  liveData[0].push(ts);
+  SERIES_DEFS.forEach((s, i) => {
+    const v = entry[s.key];
+    liveData[i + 1].push((v == null || v === '') ? null : Number(v));
+  });
+
+  // Trim to rolling window
+  const cutoff = ts - LIVE_WINDOW_SECONDS;
+  while (liveData[0].length > 1 && liveData[0][0] < cutoff) {
+    liveData.forEach(arr => arr.shift());
+  }
+
+  if (liveChart) liveChart.setData(liveData);
+}
+
+function updateChips(entry) {
+  ['boost_actual','baro_sae','baro_ecu','vane_actual'].forEach(k => {
+    const el = document.getElementById('chip-' + k);
+    if (el) el.textContent = fmt(entry[k]);
+  });
+}
+
+// ── SSE ────────────────────────────────────────────────────────────────────
+function openSSE() {
+  if (liveES) return;
+  liveES = new EventSource('/stream');
+  liveES.onmessage = e => {
+    try {
+      const entry = JSON.parse(e.data);
+      appendLiveEntry(entry);
+      updateChips(entry);
+    } catch (_) {}
+  };
+  liveES.onerror = () => {};
+}
+
+function closeSSE() {
+  if (liveES) { liveES.close(); liveES = null; }
+}
+
+// ── Series toggles ─────────────────────────────────────────────────────────
+function buildToggles(containerId, chartGetter) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  SERIES_DEFS.forEach((s, i) => {
+    const pill = document.createElement('label');
+    pill.className = 'toggle-pill';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = visible[s.key];
+    cb.addEventListener('change', () => {
+      visible[s.key] = cb.checked;
+      const chart = chartGetter();
+      if (chart) chart.setSeries(i + 1, { show: cb.checked });
+    });
+    pill.appendChild(cb);
+    pill.appendChild(document.createTextNode(s.label));
+    container.appendChild(pill);
+  });
+}
+
+// ── Status ─────────────────────────────────────────────────────────────────
+async function refreshStatus() {
+  try {
+    const r = await fetch('/status');
+    const d = await r.json();
+    isLogging = d.is_logging;
+    setLoggingUI(isLogging);
+    if (d.latest_values) updateChips(d.latest_values);
+  } catch (_) {}
+}
+
+function setLoggingUI(logging) {
+  const dot = document.getElementById('status-dot');
+  const lbl = document.getElementById('status-label');
+  const btn = document.getElementById('toggle-btn');
+  dot.className = 'logging ' + (logging ? 'logging' : 'paused');
+  lbl.textContent = logging ? 'LOGGING' : 'PAUSED';
+  btn.textContent = logging ? 'Stop Logging' : 'Start Logging';
+}
+
+async function toggleLogging() {
+  const endpoint = isLogging ? '/logging/stop' : '/logging/start';
+  try {
+    await fetch(endpoint, { method: 'POST' });
+    await refreshStatus();
+  } catch (_) {}
+}
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', ['live','sessions'][i] === tab);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+
+  if (tab === 'live') {
+    openSSE();
+    if (!liveChart) {
+      createLiveChart();
+      buildToggles('series-toggles', () => liveChart);
+    }
+  } else {
+    closeSSE();
+    loadSessionsList();
+  }
+}
+
+// ── Sessions list ──────────────────────────────────────────────────────────
+async function loadSessionsList() {
+  showSessionsList();
+  const el = document.getElementById('sessions-list');
+  el.innerHTML = '<p style="color:#888;padding:10px">Loading…</p>';
+  try {
+    const r = await fetch('/sessions');
+    const sessions = await r.json();
+    if (!sessions.length) {
+      el.innerHTML = '<p style="color:#888;padding:10px">No sessions recorded yet.</p>';
+      return;
+    }
+    el.innerHTML = '';
+    sessions.forEach(s => {
+      const card = document.createElement('div');
+      card.className = 'sess-card';
+      const dur = s.duration_seconds != null
+        ? Math.floor(s.duration_seconds / 60) + 'm ' + Math.floor(s.duration_seconds % 60) + 's'
+        : 'unknown';
+      const size = (s.size_bytes / 1024).toFixed(1) + ' KB';
+      card.innerHTML = `
+        <div class="sess-info">
+          <div class="fn">${s.filename}</div>
+          <div class="meta">${s.start_time} &nbsp;|&nbsp; ${dur} &nbsp;|&nbsp; ${size}</div>
+        </div>
+        <div class="sess-actions">
+          <a href="/sessions/${encodeURIComponent(s.filename)}/download" download>Download</a>
+          <button onclick="viewSession('${s.filename}')">View</button>
+        </div>`;
+      el.appendChild(card);
+    });
+  } catch (e) {
+    el.innerHTML = '<p style="color:#f87171;padding:10px">Failed to load sessions.</p>';
+  }
+}
+
+function showSessionsList() {
+  document.getElementById('sessions-list').style.display = '';
+  document.getElementById('sess-chart-wrap').style.display = 'none';
+  document.getElementById('sess-series-toggles').style.display = 'none';
+  document.getElementById('back-btn').style.display = 'none';
+  if (sessChart) { sessChart.destroy(); sessChart = null; }
+}
+
+// ── Session chart ──────────────────────────────────────────────────────────
+async function viewSession(filename) {
+  document.getElementById('sessions-list').style.display = 'none';
+  document.getElementById('sess-chart-wrap').style.display = '';
+  document.getElementById('sess-series-toggles').style.display = '';
+  document.getElementById('back-btn').style.display = '';
+  const wrap = document.getElementById('sess-chart-wrap');
+  wrap.innerHTML = '<p style="color:#888;padding:10px">Loading…</p>';
+
+  try {
+    const r = await fetch('/sessions/' + encodeURIComponent(filename));
+    const d = await r.json();
+
+    wrap.innerHTML = '';
+    if (sessChart) { sessChart.destroy(); sessChart = null; }
+
+    const showSet = new Set(SERIES_DEFS.filter(s => visible[s.key]).map(s => s.key));
+
+    // Build data array: [timestamps, ...series values]
+    const data = [d.timestamps];
+    SERIES_DEFS.forEach(s => {
+      data.push(d.series[s.key] || d.timestamps.map(() => null));
+    });
+
+    sessChart = new uPlot({
+      width: wrap.clientWidth,
+      height: sessChartHeight(),
+      scales: buildScales(),
+      axes: buildAxes(),
+      series: buildSeriesConfig(showSet),
+      cursor: { sync: { key: 'sess' } },
+    }, data, wrap);
+
+    buildToggles('sess-series-toggles', () => sessChart);
+  } catch (e) {
+    wrap.innerHTML = '<p style="color:#f87171;padding:10px">Failed to load session.</p>';
+  }
+}
+
+// ── Resize ─────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  if (liveChart) {
+    liveChart.setSize({ width: document.getElementById('chart-wrap').clientWidth, height: chartHeight() });
+  }
+  if (sessChart) {
+    sessChart.setSize({ width: document.getElementById('sess-chart-wrap').clientWidth, height: sessChartHeight() });
+  }
+});
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+(async () => {
+  await refreshStatus();
+  createLiveChart();
+  buildToggles('series-toggles', () => liveChart);
+  openSSE();
+})();
+</script>
+</body>
+</html>

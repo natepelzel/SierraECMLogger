@@ -1,0 +1,14 @@
+[Unit]
+Description=OBD Logger
+After=network.target
+
+[Service]
+ExecStartPre=/sbin/ip link set can0 up type can bitrate 500000
+ExecStart=/home/pi/obd-env/bin/python /home/pi/obd-logger/main.py
+WorkingDirectory=/home/pi/obd-logger
+Restart=on-failure
+RestartSec=5
+User=pi
+
+[Install]
+WantedBy=multi-user.target
