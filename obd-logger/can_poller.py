@@ -82,7 +82,7 @@ async def start_poller() -> None:
         csv_file, csv_writer, session_cols = _open_new_csv()
 
     try:
-        bus = can.interface.Bus(channel=CAN_INTERFACE, bustype='socketcan')
+        bus = can.interface.Bus(channel=CAN_INTERFACE, interface='socketcan')
     except Exception as e:
         print(f'[poller] Failed to open CAN bus: {e}', file=sys.stderr)
         return

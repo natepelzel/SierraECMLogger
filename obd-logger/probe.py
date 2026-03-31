@@ -119,7 +119,7 @@ async def probe():
     setup_can()
 
     try:
-        bus = can.interface.Bus(channel=CAN_INTERFACE, bustype='socketcan')
+        bus = can.interface.Bus(channel=CAN_INTERFACE, interface='socketcan')
     except Exception as e:
         sys.exit(f'[probe] Failed to open CAN bus: {e}')
 
