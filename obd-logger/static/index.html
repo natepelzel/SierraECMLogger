@@ -169,27 +169,48 @@ const LIVE_WINDOW_SECONDS = 60;
 
 // Series definitions — order, label, unit, colour, y-axis group
 const SERIES_DEFS = [
-  { key: 'boost_actual',      label: 'Boost Actual',      unit: 'kPa',  color: '#60a5fa', axis: 'kPa_boost' },
-  { key: 'boost_desired',     label: 'Boost Desired',     unit: 'kPa',  color: '#93c5fd', axis: 'kPa_boost' },
-  { key: 'baro_sae',          label: 'Baro (SAE)',        unit: 'kPa',  color: '#34d399', axis: 'kPa_baro'  },
-  { key: 'baro_ecu',          label: 'Baro (ECU)',        unit: 'kPa',  color: '#6ee7b7', axis: 'kPa_baro'  },
-  { key: 'map',               label: 'MAP',               unit: 'kPa',  color: '#a78bfa', axis: 'kPa_baro'  },
-  { key: 'vane_actual',       label: 'Vane Actual',       unit: '%',    color: '#fb923c', axis: 'pct'       },
-  { key: 'vane_desired',      label: 'Vane Desired',      unit: '%',    color: '#fcd34d', axis: 'pct'       },
-  { key: 'throttle',          label: 'Throttle',          unit: '%',    color: '#f472b6', axis: 'pct'       },
-  { key: 'maf',               label: 'MAF',               unit: 'g/s',  color: '#e879f9', axis: 'maf'       },
-  { key: 'iat',               label: 'IAT',               unit: '°C',   color: '#f97316', axis: 'temp'      },
-  { key: 'coolant_temp',      label: 'Coolant Temp',      unit: '°C',   color: '#fbbf24', axis: 'temp'      },
-  { key: 'fuel_rail_actual',  label: 'Fuel Rail Actual',  unit: 'MPa',  color: '#38bdf8', axis: 'mpa'       },
-  { key: 'fuel_rail_desired', label: 'Fuel Rail Desired', unit: 'MPa',  color: '#7dd3fc', axis: 'mpa'       },
-  { key: 'inj_bal_cyl1',      label: 'Inj Bal Cyl 1',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl2',      label: 'Inj Bal Cyl 2',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl3',      label: 'Inj Bal Cyl 3',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl4',      label: 'Inj Bal Cyl 4',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl5',      label: 'Inj Bal Cyl 5',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl6',      label: 'Inj Bal Cyl 6',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl7',      label: 'Inj Bal Cyl 7',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl8',      label: 'Inj Bal Cyl 8',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  // ── Active by default ────────────────────────────────────────────────────
+  { key: 'boost_actual',         label: 'Boost Actual',         unit: 'kPa',  color: '#60a5fa', axis: 'kPa_boost' },
+  { key: 'boost_desired',        label: 'Boost Desired',        unit: 'kPa',  color: '#93c5fd', axis: 'kPa_boost' },
+  { key: 'baro_sae',             label: 'Baro (SAE)',           unit: 'kPa',  color: '#34d399', axis: 'kPa_baro'  },
+  { key: 'baro_ecu',             label: 'Baro (ECU)',           unit: 'kPa',  color: '#6ee7b7', axis: 'kPa_baro'  },
+  { key: 'map',                  label: 'MAP',                  unit: 'kPa',  color: '#a78bfa', axis: 'kPa_baro'  },
+  { key: 'vane_actual',          label: 'Vane Actual',          unit: '%',    color: '#fb923c', axis: 'pct'       },
+  { key: 'vane_desired',         label: 'Vane Desired',         unit: '%',    color: '#fcd34d', axis: 'pct'       },
+  { key: 'throttle',             label: 'Throttle',             unit: '%',    color: '#f472b6', axis: 'pct'       },
+  { key: 'maf',                  label: 'MAF',                  unit: 'g/s',  color: '#e879f9', axis: 'maf'       },
+  { key: 'iat',                  label: 'IAT',                  unit: '°C',   color: '#f97316', axis: 'temp'      },
+  { key: 'coolant_temp',         label: 'Coolant Temp',         unit: '°C',   color: '#fbbf24', axis: 'temp'      },
+  { key: 'fuel_rail_actual',     label: 'Fuel Rail Actual',     unit: 'MPa',  color: '#38bdf8', axis: 'mpa'       },
+  { key: 'fuel_rail_desired',    label: 'Fuel Rail Desired',    unit: 'MPa',  color: '#7dd3fc', axis: 'mpa'       },
+  { key: 'inj_bal_cyl1',         label: 'Inj Bal Cyl 1',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl2',         label: 'Inj Bal Cyl 2',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl3',         label: 'Inj Bal Cyl 3',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl4',         label: 'Inj Bal Cyl 4',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl5',         label: 'Inj Bal Cyl 5',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl6',         label: 'Inj Bal Cyl 6',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl7',         label: 'Inj Bal Cyl 7',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl8',         label: 'Inj Bal Cyl 8',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  // ── Standard OBD-II — off by default, enable via PIDs tab ────────────────
+  { key: 'rpm',                  label: 'RPM',                  unit: 'RPM',  color: '#f43f5e', axis: 'rpm'       },
+  { key: 'vehicle_speed',        label: 'Vehicle Speed',        unit: 'km/h', color: '#fb923c', axis: 'speed'     },
+  { key: 'engine_load',          label: 'Engine Load',          unit: '%',    color: '#84cc16', axis: 'pct'       },
+  { key: 'timing_advance',       label: 'Timing Advance',       unit: '°',    color: '#eab308', axis: 'deg'       },
+  { key: 'accel_pedal_d',        label: 'Accel Pedal',          unit: '%',    color: '#c4b5fd', axis: 'pct'       },
+  { key: 'rel_throttle',         label: 'Rel Throttle',         unit: '%',    color: '#f9a8d4', axis: 'pct'       },
+  { key: 'abs_load',             label: 'Abs Load',             unit: '%',    color: '#10b981', axis: 'pct'       },
+  { key: 'driver_demand_torque', label: 'Demand Torque',        unit: '%',    color: '#67e8f9', axis: 'pct'       },
+  { key: 'actual_torque',        label: 'Actual Torque',        unit: '%',    color: '#22d3ee', axis: 'pct'       },
+  { key: 'ref_torque',           label: 'Ref Torque',           unit: 'Nm',   color: '#6b7280', axis: 'nm'        },
+  { key: 'stft_b1',              label: 'STFT B1',              unit: '%',    color: '#d946ef', axis: 'pct'       },
+  { key: 'ltft_b1',              label: 'LTFT B1',              unit: '%',    color: '#c084fc', axis: 'pct'       },
+  { key: 'fuel_pressure',        label: 'Fuel Pressure',        unit: 'kPa',  color: '#2dd4bf', axis: 'kPa_baro'  },
+  { key: 'fuel_rail_gauge',      label: 'Fuel Rail (SAE)',      unit: 'MPa',  color: '#0ea5e9', axis: 'mpa'       },
+  { key: 'fuel_rate',            label: 'Fuel Rate',            unit: 'L/h',  color: '#86efac', axis: 'lh'        },
+  { key: 'ambient_temp',         label: 'Ambient Temp',         unit: '°C',   color: '#fdba74', axis: 'temp'      },
+  { key: 'oil_temp',             label: 'Oil Temp',             unit: '°C',   color: '#fb7185', axis: 'temp'      },
+  { key: 'control_voltage',      label: 'ECM Voltage',          unit: 'V',    color: '#a3e635', axis: 'volt'      },
+  { key: 'run_time',             label: 'Run Time',             unit: 's',    color: '#94a3b8', axis: 'sec'       },
 ];
 
 // Which series are visible by default
@@ -232,7 +253,9 @@ function buildAxes() {
   ];
   const axisLabels = {
     kPa_boost: 'kPa (boost)', kPa_baro: 'kPa (baro/MAP)', pct: '%',
-    maf: 'g/s', temp: '°C', mpa: 'MPa', mg: 'mg (bal)'
+    maf: 'g/s', temp: '°C', mpa: 'MPa', mg: 'mg (bal)',
+    rpm: 'RPM', speed: 'km/h', deg: '°', volt: 'V',
+    lh: 'L/h', nm: 'Nm', sec: 's',
   };
   axisKeys.forEach((ak, i) => {
     axes.push({
