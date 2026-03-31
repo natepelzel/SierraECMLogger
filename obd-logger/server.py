@@ -8,11 +8,12 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 import state
 from config import LOG_DIR, SESSION_DECIMATED_POINTS
 from decimation import decimate
-from pids import COLUMN_UNITS
+from pids import COLUMN_UNITS, PIDS, PIDS_BY_NAME, save_pid_config
 
 app = FastAPI()
 
@@ -71,6 +72,40 @@ async def logging_start():
 async def logging_stop():
     state.is_logging = False
     return {'is_logging': False}
+
+
+@app.get('/pids')
+async def get_pids():
+    return [
+        {
+            'name': p.name,
+            'mode': p.mode,
+            'pid': p.pid,
+            'unit': p.unit,
+            'poll_interval_ms': p.poll_interval_ms,
+            'enabled': p.enabled,
+            'csv_columns': p.csv_columns,
+        }
+        for p in PIDS
+    ]
+
+
+class _PidUpdate(BaseModel):
+    name: str
+    enabled: bool
+    poll_interval_ms: int
+
+
+@app.put('/pids')
+async def set_pids(updates: list[_PidUpdate]):
+    for u in updates:
+        p = PIDS_BY_NAME.get(u.name)
+        if p is None:
+            continue
+        p.enabled = u.enabled
+        p.poll_interval_ms = max(10, u.poll_interval_ms)
+    save_pid_config()
+    return {'ok': True}
 
 
 @app.get('/sessions')

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -11,6 +12,7 @@ class Pid:
     unit: str
     poll_interval_ms: int
     csv_columns: list[str] = field(default_factory=list)
+    enabled: bool = True
     # Single-value PIDs: csv_columns defaults to [name]
     # Injector balance rates: csv_columns = ['inj_bal_cyl1', ..., 'inj_bal_cyl8']
 
@@ -128,3 +130,38 @@ COLUMN_UNITS: dict[str, str] = {}
 for _p in PIDS:
     for _col in _p.csv_columns:
         COLUMN_UNITS[_col] = _p.unit
+
+
+# ── Persistent PID Config ─────────────────────────────────────────────────────
+
+def load_pid_config() -> dict:
+    """Load per-PID overrides from JSON. Returns {} if not found or invalid."""
+    from config import PID_CONFIG_FILE
+    try:
+        with open(PID_CONFIG_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_pid_config() -> None:
+    """Persist current PIDS enabled/poll_interval_ms to JSON."""
+    from config import PID_CONFIG_FILE
+    data = {p.name: {'enabled': p.enabled, 'poll_interval_ms': p.poll_interval_ms} for p in PIDS}
+    with open(PID_CONFIG_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def apply_pid_config(overrides: dict) -> None:
+    """Apply overrides dict to the PIDS list in-place."""
+    for p in PIDS:
+        if p.name in overrides:
+            ov = overrides[p.name]
+            if 'enabled' in ov:
+                p.enabled = bool(ov['enabled'])
+            if 'poll_interval_ms' in ov:
+                p.poll_interval_ms = max(10, int(ov['poll_interval_ms']))
+
+
+# Apply any persisted configuration on module load
+apply_pid_config(load_pid_config())
