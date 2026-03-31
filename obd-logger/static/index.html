@@ -87,6 +87,21 @@
     display: none; align-self: flex-start;
   }
   #back-btn:hover { background: #3a3a3a; }
+
+  /* ── PIDs config ── */
+  #tab-pids { overflow-y: auto; padding: 12px 14px; }
+  #pids-table { width: 100%; border-collapse: collapse; }
+  #pids-table th {
+    padding: 6px 8px; text-align: left; color: #888; font-size: 12px;
+    border-bottom: 1px solid #333; font-weight: normal;
+  }
+  #pids-table td { padding: 6px 8px; border-bottom: 1px solid #1e1e1e; font-size: 13px; }
+  #pids-table tr:hover td { background: #1a1a1a; }
+  .pid-poll-input {
+    width: 80px; background: #1e1e1e; border: 1px solid #444; border-radius: 4px;
+    color: #e0e0e0; padding: 3px 6px; font-size: 12px;
+  }
+  .pid-poll-input:focus { outline: 1px solid #60a5fa; border-color: #60a5fa; }
 </style>
 </head>
 <body>
@@ -108,6 +123,7 @@
 <div id="tabs">
   <button class="tab-btn active" onclick="switchTab('live')">Live</button>
   <button class="tab-btn" onclick="switchTab('sessions')">Sessions</button>
+  <button class="tab-btn" onclick="switchTab('pids')">PIDs</button>
 </div>
 
 <!-- ── Live Tab ── -->
@@ -124,33 +140,77 @@
   <div id="sess-series-toggles" style="display:none;"></div>
 </div>
 
+<!-- ── PIDs Tab ── -->
+<div id="tab-pids" class="tab-panel" style="height: calc(100vh - 105px);">
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+    <span style="font-weight:600; font-size:14px;">PID Configuration</span>
+    <button onclick="savePidConfig()" style="padding:4px 16px; border-radius:4px; border:1px solid #555; background:#2a2a2a; color:#e0e0e0; cursor:pointer; font-size:13px;">Save Changes</button>
+  </div>
+  <div id="pids-status" style="margin-bottom:8px; font-size:12px; min-height:16px;"></div>
+  <table id="pids-table">
+    <thead>
+      <tr>
+        <th>Enabled</th>
+        <th>Name</th>
+        <th>Mode</th>
+        <th>PID</th>
+        <th>Unit</th>
+        <th>Poll (ms)</th>
+        <th>Columns</th>
+      </tr>
+    </thead>
+    <tbody id="pids-tbody"></tbody>
+  </table>
+</div>
+
 <script>
 // ── Constants ──────────────────────────────────────────────────────────────
 const LIVE_WINDOW_SECONDS = 60;
 
 // Series definitions — order, label, unit, colour, y-axis group
 const SERIES_DEFS = [
-  { key: 'boost_actual',      label: 'Boost Actual',      unit: 'kPa',  color: '#60a5fa', axis: 'kPa_boost' },
-  { key: 'boost_desired',     label: 'Boost Desired',     unit: 'kPa',  color: '#93c5fd', axis: 'kPa_boost' },
-  { key: 'baro_sae',          label: 'Baro (SAE)',        unit: 'kPa',  color: '#34d399', axis: 'kPa_baro'  },
-  { key: 'baro_ecu',          label: 'Baro (ECU)',        unit: 'kPa',  color: '#6ee7b7', axis: 'kPa_baro'  },
-  { key: 'map',               label: 'MAP',               unit: 'kPa',  color: '#a78bfa', axis: 'kPa_baro'  },
-  { key: 'vane_actual',       label: 'Vane Actual',       unit: '%',    color: '#fb923c', axis: 'pct'       },
-  { key: 'vane_desired',      label: 'Vane Desired',      unit: '%',    color: '#fcd34d', axis: 'pct'       },
-  { key: 'throttle',          label: 'Throttle',          unit: '%',    color: '#f472b6', axis: 'pct'       },
-  { key: 'maf',               label: 'MAF',               unit: 'g/s',  color: '#e879f9', axis: 'maf'       },
-  { key: 'iat',               label: 'IAT',               unit: '°C',   color: '#f97316', axis: 'temp'      },
-  { key: 'coolant_temp',      label: 'Coolant Temp',      unit: '°C',   color: '#fbbf24', axis: 'temp'      },
-  { key: 'fuel_rail_actual',  label: 'Fuel Rail Actual',  unit: 'MPa',  color: '#38bdf8', axis: 'mpa'       },
-  { key: 'fuel_rail_desired', label: 'Fuel Rail Desired', unit: 'MPa',  color: '#7dd3fc', axis: 'mpa'       },
-  { key: 'inj_bal_cyl1',      label: 'Inj Bal Cyl 1',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl2',      label: 'Inj Bal Cyl 2',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl3',      label: 'Inj Bal Cyl 3',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl4',      label: 'Inj Bal Cyl 4',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl5',      label: 'Inj Bal Cyl 5',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl6',      label: 'Inj Bal Cyl 6',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl7',      label: 'Inj Bal Cyl 7',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
-  { key: 'inj_bal_cyl8',      label: 'Inj Bal Cyl 8',    unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  // ── Active by default ────────────────────────────────────────────────────
+  { key: 'boost_actual',         label: 'Boost Actual',         unit: 'kPa',  color: '#60a5fa', axis: 'kPa_boost' },
+  { key: 'boost_desired',        label: 'Boost Desired',        unit: 'kPa',  color: '#93c5fd', axis: 'kPa_boost' },
+  { key: 'baro_sae',             label: 'Baro (SAE)',           unit: 'kPa',  color: '#34d399', axis: 'kPa_baro'  },
+  { key: 'baro_ecu',             label: 'Baro (ECU)',           unit: 'kPa',  color: '#6ee7b7', axis: 'kPa_baro'  },
+  { key: 'map',                  label: 'MAP',                  unit: 'kPa',  color: '#a78bfa', axis: 'kPa_baro'  },
+  { key: 'vane_actual',          label: 'Vane Actual',          unit: '%',    color: '#fb923c', axis: 'pct'       },
+  { key: 'vane_desired',         label: 'Vane Desired',         unit: '%',    color: '#fcd34d', axis: 'pct'       },
+  { key: 'throttle',             label: 'Throttle',             unit: '%',    color: '#f472b6', axis: 'pct'       },
+  { key: 'maf',                  label: 'MAF',                  unit: 'g/s',  color: '#e879f9', axis: 'maf'       },
+  { key: 'iat',                  label: 'IAT',                  unit: '°C',   color: '#f97316', axis: 'temp'      },
+  { key: 'coolant_temp',         label: 'Coolant Temp',         unit: '°C',   color: '#fbbf24', axis: 'temp'      },
+  { key: 'fuel_rail_actual',     label: 'Fuel Rail Actual',     unit: 'MPa',  color: '#38bdf8', axis: 'mpa'       },
+  { key: 'fuel_rail_desired',    label: 'Fuel Rail Desired',    unit: 'MPa',  color: '#7dd3fc', axis: 'mpa'       },
+  { key: 'inj_bal_cyl1',         label: 'Inj Bal Cyl 1',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl2',         label: 'Inj Bal Cyl 2',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl3',         label: 'Inj Bal Cyl 3',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl4',         label: 'Inj Bal Cyl 4',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl5',         label: 'Inj Bal Cyl 5',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl6',         label: 'Inj Bal Cyl 6',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl7',         label: 'Inj Bal Cyl 7',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  { key: 'inj_bal_cyl8',         label: 'Inj Bal Cyl 8',       unit: 'mg',   color: '#f9a8d4', axis: 'mg'        },
+  // ── Standard OBD-II — off by default, enable via PIDs tab ────────────────
+  { key: 'rpm',                  label: 'RPM',                  unit: 'RPM',  color: '#f43f5e', axis: 'rpm'       },
+  { key: 'vehicle_speed',        label: 'Vehicle Speed',        unit: 'km/h', color: '#fb923c', axis: 'speed'     },
+  { key: 'engine_load',          label: 'Engine Load',          unit: '%',    color: '#84cc16', axis: 'pct'       },
+  { key: 'timing_advance',       label: 'Timing Advance',       unit: '°',    color: '#eab308', axis: 'deg'       },
+  { key: 'accel_pedal_d',        label: 'Accel Pedal',          unit: '%',    color: '#c4b5fd', axis: 'pct'       },
+  { key: 'rel_throttle',         label: 'Rel Throttle',         unit: '%',    color: '#f9a8d4', axis: 'pct'       },
+  { key: 'abs_load',             label: 'Abs Load',             unit: '%',    color: '#10b981', axis: 'pct'       },
+  { key: 'driver_demand_torque', label: 'Demand Torque',        unit: '%',    color: '#67e8f9', axis: 'pct'       },
+  { key: 'actual_torque',        label: 'Actual Torque',        unit: '%',    color: '#22d3ee', axis: 'pct'       },
+  { key: 'ref_torque',           label: 'Ref Torque',           unit: 'Nm',   color: '#6b7280', axis: 'nm'        },
+  { key: 'stft_b1',              label: 'STFT B1',              unit: '%',    color: '#d946ef', axis: 'pct'       },
+  { key: 'ltft_b1',              label: 'LTFT B1',              unit: '%',    color: '#c084fc', axis: 'pct'       },
+  { key: 'fuel_pressure',        label: 'Fuel Pressure',        unit: 'kPa',  color: '#2dd4bf', axis: 'kPa_baro'  },
+  { key: 'fuel_rail_gauge',      label: 'Fuel Rail (SAE)',      unit: 'MPa',  color: '#0ea5e9', axis: 'mpa'       },
+  { key: 'fuel_rate',            label: 'Fuel Rate',            unit: 'L/h',  color: '#86efac', axis: 'lh'        },
+  { key: 'ambient_temp',         label: 'Ambient Temp',         unit: '°C',   color: '#fdba74', axis: 'temp'      },
+  { key: 'oil_temp',             label: 'Oil Temp',             unit: '°C',   color: '#fb7185', axis: 'temp'      },
+  { key: 'control_voltage',      label: 'ECM Voltage',          unit: 'V',    color: '#a3e635', axis: 'volt'      },
+  { key: 'run_time',             label: 'Run Time',             unit: 's',    color: '#94a3b8', axis: 'sec'       },
 ];
 
 // Which series are visible by default
@@ -193,7 +253,9 @@ function buildAxes() {
   ];
   const axisLabels = {
     kPa_boost: 'kPa (boost)', kPa_baro: 'kPa (baro/MAP)', pct: '%',
-    maf: 'g/s', temp: '°C', mpa: 'MPa', mg: 'mg (bal)'
+    maf: 'g/s', temp: '°C', mpa: 'MPa', mg: 'mg (bal)',
+    rpm: 'RPM', speed: 'km/h', deg: '°', volt: 'V',
+    lh: 'L/h', nm: 'Nm', sec: 's',
   };
   axisKeys.forEach((ak, i) => {
     axes.push({
@@ -348,7 +410,7 @@ async function toggleLogging() {
 function switchTab(tab) {
   currentTab = tab;
   document.querySelectorAll('.tab-btn').forEach((b, i) => {
-    b.classList.toggle('active', ['live','sessions'][i] === tab);
+    b.classList.toggle('active', ['live', 'sessions', 'pids'][i] === tab);
   });
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
@@ -359,9 +421,84 @@ function switchTab(tab) {
       createLiveChart();
       buildToggles('series-toggles', () => liveChart);
     }
-  } else {
+  } else if (tab === 'sessions') {
     closeSSE();
     loadSessionsList();
+  } else if (tab === 'pids') {
+    closeSSE();
+    loadPidConfig();
+  }
+}
+
+// ── PIDs Configuration ─────────────────────────────────────────────────────
+let pidData = [];
+
+async function loadPidConfig() {
+  try {
+    const r = await fetch('/pids');
+    pidData = await r.json();
+    renderPidTable();
+  } catch (_) {
+    document.getElementById('pids-status').textContent = 'Failed to load PID configuration.';
+  }
+}
+
+function renderPidTable() {
+  const tbody = document.getElementById('pids-tbody');
+  tbody.innerHTML = '';
+  pidData.forEach(p => {
+    const tr = document.createElement('tr');
+    const modeHex = '0x' + p.mode.toString(16).toUpperCase().padStart(2, '0');
+    const pidHex  = '0x' + p.pid.toString(16).toUpperCase().padStart(4, '0');
+    tr.innerHTML = `
+      <td style="text-align:center;">
+        <input type="checkbox" data-name="${p.name}" data-field="enabled" ${p.enabled ? 'checked' : ''}
+          style="accent-color:#60a5fa; width:15px; height:15px; cursor:pointer;">
+      </td>
+      <td style="font-family:monospace; color:#a3e635;">${p.name}</td>
+      <td style="color:#888;">${modeHex}</td>
+      <td style="font-family:monospace; color:#888;">${pidHex}</td>
+      <td style="color:#888;">${p.unit}</td>
+      <td>
+        <input type="number" class="pid-poll-input" data-name="${p.name}" data-field="poll_interval_ms"
+          value="${p.poll_interval_ms}" min="10" max="10000" step="10">
+      </td>
+      <td style="color:#555; font-size:11px; font-family:monospace;">${p.csv_columns.join(', ')}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function savePidConfig() {
+  const updates = [];
+  pidData.forEach(p => {
+    const cb  = document.querySelector(`[data-name="${p.name}"][data-field="enabled"]`);
+    const inp = document.querySelector(`[data-name="${p.name}"][data-field="poll_interval_ms"]`);
+    const pollMs = parseInt(inp.value, 10);
+    updates.push({
+      name: p.name,
+      enabled: cb.checked,
+      poll_interval_ms: isNaN(pollMs) ? p.poll_interval_ms : Math.max(10, pollMs),
+    });
+  });
+
+  const statusEl = document.getElementById('pids-status');
+  statusEl.style.color = '#888';
+  statusEl.textContent = 'Saving\u2026';
+
+  try {
+    const r = await fetch('/pids', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    pidData = pidData.map((p, i) => ({ ...p, ...updates[i] }));
+    statusEl.style.color = '#22c55e';
+    statusEl.textContent = 'Saved. Changes take effect immediately (enabled/disabled applies to new sessions).';
+    setTimeout(() => { statusEl.textContent = ''; }, 5000);
+  } catch (e) {
+    statusEl.style.color = '#f87171';
+    statusEl.textContent = 'Save failed: ' + e.message;
   }
 }
 

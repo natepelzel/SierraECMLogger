@@ -6,6 +6,8 @@ CAN_BITRATE               = 500_000     # LMM Duramax HS-CAN
 LOG_DIR                   = Path(__file__).parent / 'logs'
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+PID_CONFIG_FILE           = Path(__file__).parent / 'pid_config.json'
+
 LIVE_WINDOW_SECONDS       = 60          # Rolling window shown in live chart
 LIVE_DEQUE_MAXLEN         = 600         # ~10 min of sweeps at ~1Hz
 SESSION_DECIMATED_POINTS  = 1_500       # Target points per series for historical view

@@ -18,17 +18,20 @@ from config import (
 )
 from pids import PIDS, OBD_REQUEST_ID, OBD_RESPONSE_ID, build_request
 
-# All CSV column names in order (timestamp first, then all PID columns)
-_ALL_COLUMNS = ['timestamp'] + [col for p in PIDS for col in p.csv_columns]
+
+def _active_columns() -> list[str]:
+    """Return CSV column list for currently enabled PIDs."""
+    return ['timestamp'] + [col for p in PIDS if p.enabled for col in p.csv_columns]
 
 
-def _open_new_csv() -> tuple[object, csv.DictWriter]:
+def _open_new_csv() -> tuple[object, csv.DictWriter, list[str]]:
+    cols = _active_columns()
     filename = datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '.csv'
     path = LOG_DIR / filename
     f = open(path, 'w', newline='', buffering=1)
-    writer = csv.DictWriter(f, fieldnames=_ALL_COLUMNS)
+    writer = csv.DictWriter(f, fieldnames=cols)
     writer.writeheader()
-    return f, writer
+    return f, writer, cols
 
 
 async def _send_and_recv(bus: can.BusABC, pid_obj, reader: can.AsyncBufferedReader) -> bytes | None:
@@ -73,9 +76,10 @@ async def start_poller() -> None:
 
     csv_file = None
     csv_writer = None
+    session_cols: list[str] | None = None
 
     if state.is_logging:
-        csv_file, csv_writer = _open_new_csv()
+        csv_file, csv_writer, session_cols = _open_new_csv()
 
     try:
         bus = can.interface.Bus(channel=CAN_INTERFACE, bustype='socketcan')
@@ -91,6 +95,8 @@ async def start_poller() -> None:
             now = time.monotonic()
 
             for pid_obj in PIDS:
+                if not pid_obj.enabled:
+                    continue
                 last = last_polled.get(pid_obj.name, 0.0)
                 if (now - last) * 1000 < pid_obj.poll_interval_ms:
                     continue
@@ -115,19 +121,18 @@ async def start_poller() -> None:
                 else:
                     state.latest_values[pid_obj.name] = result
 
-            # Build sweep dict using latest known values for every column
-            ts = time.time()
-            sweep: dict = {'timestamp': ts}
-            for col in _ALL_COLUMNS[1:]:
-                val = state.latest_values.get(col)
-                sweep[col] = '' if val is None or (isinstance(val, float) and math.isnan(val)) else val
-
-            # Also store under the 'ts' key for the live deque (used by SSE)
-            live_entry = {'ts': ts, **{k: v for k, v in sweep.items() if k != 'timestamp'}}
-
             if state.is_logging:
                 if csv_writer is None:
-                    csv_file, csv_writer = _open_new_csv()
+                    csv_file, csv_writer, session_cols = _open_new_csv()
+
+                # Build sweep using columns that were active when this session started
+                ts = time.time()
+                sweep: dict = {'timestamp': ts}
+                for col in session_cols[1:]:
+                    val = state.latest_values.get(col)
+                    sweep[col] = '' if val is None or (isinstance(val, float) and math.isnan(val)) else val
+
+                live_entry = {'ts': ts, **{k: v for k, v in sweep.items() if k != 'timestamp'}}
 
                 csv_writer.writerow(sweep)
                 state.live_deque.append(live_entry)
@@ -151,6 +156,7 @@ async def start_poller() -> None:
                     csv_file.close()
                     csv_file = None
                     csv_writer = None
+                    session_cols = None
 
             # Small yield to allow other coroutines to run between sweeps
             await asyncio.sleep(0)
