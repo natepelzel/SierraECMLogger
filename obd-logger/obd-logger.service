@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 ExecStartPre=/sbin/ip link set can0 up type can bitrate 500000
-ExecStart=/home/pi/obd-env/bin/python /home/pi/obd-logger/main.py
-WorkingDirectory=/home/pi/obd-logger
+ExecStart=/home/canbus/Documents/Code/SierraECMLogger/venv/bin/python /home/canbus/Documents/Code/SierraECMLogger/main.py
+WorkingDirectory=/home/canbus/Documents/Code/SierraECMLogger
 Restart=on-failure
 RestartSec=5
 User=pi
