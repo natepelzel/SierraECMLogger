@@ -14,6 +14,7 @@ from config import (
     CAN_INTERFACE,
     FSYNC_INTERVAL_S,
     LOG_DIR,
+    LOG_INTERVAL_MS,
     OBD_REQUEST_ID,
     POLL_TIMEOUT_MS,
 )
@@ -57,8 +58,19 @@ NRC_NAMES = {
     0x33: 'securityAccessDenied',
 }
 
+# NRCs meaning the ECM will never answer this PID — retrying is pointless
+NRC_UNSUPPORTED = {0x11, 0x12, 0x31}
+
 # (pid name, NRC) pairs already logged — avoids repeating the same rejection every poll
 _logged_rejections: set[tuple[str, int]] = set()
+
+# PIDs the ECM rejected as unsupported; skipped until the service restarts.
+# Deliberately not written to p.enabled, so the persisted web UI config is untouched.
+_unsupported: set[str] = set()
+
+
+def _should_poll(pid_obj) -> bool:
+    return pid_obj.enabled and pid_obj.name not in _unsupported
 
 
 def _is_rejection_of(raw: bytes, pid_obj) -> bool:
@@ -74,9 +86,10 @@ def _log_rejection(pid_obj, nrc: int) -> None:
     if (pid_obj.name, nrc) in _logged_rejections:
         return
     _logged_rejections.add((pid_obj.name, nrc))
+    action = 'not polling again until restart' if nrc in NRC_UNSUPPORTED else 'will keep retrying'
     print(
         f'[poller] ECM rejected {pid_obj.name} (mode {pid_obj.mode:02X} PID {pid_obj.pid:#06x}): '
-        f'NRC {nrc:#04x} {NRC_NAMES.get(nrc, "unknown")} (logged once per PID)',
+        f'NRC {nrc:#04x} {NRC_NAMES.get(nrc, "unknown")} — {action}',
         file=sys.stderr,
     )
 
@@ -121,6 +134,8 @@ async def _send_and_recv(bus: can.BusABC, pid_obj, reader: can.AsyncBufferedRead
             if nrc == NRC_RESPONSE_PENDING:
                 continue  # ECM is still working on it; keep waiting until the deadline
             _log_rejection(pid_obj, nrc)
+            if nrc in NRC_UNSUPPORTED:
+                _unsupported.add(pid_obj.name)
             return None
 
 
@@ -138,18 +153,20 @@ def _extract_data_bytes(raw: bytes, pid_obj) -> bytes:
 MAX_IDLE_SLEEP_S = 0.1
 
 
-def _seconds_until_next_due(last_polled: dict[str, float]) -> float:
+def _seconds_until_next_due(last_polled: dict[str, float], next_row: float) -> float:
     now = time.monotonic()
     waits = [
         last_polled.get(p.name, 0.0) + p.poll_interval_ms / 1000.0 - now
-        for p in PIDS if p.enabled
+        for p in PIDS if _should_poll(p)
     ]
-    return max(0.0, min(waits + [MAX_IDLE_SLEEP_S]))
+    return max(0.0, min(waits + [next_row - now, MAX_IDLE_SLEEP_S]))
 
 
 async def start_poller() -> None:
     last_polled: dict[str, float] = {}
     last_fsync: float = time.monotonic()
+    row_interval = LOG_INTERVAL_MS / 1000.0
+    next_row: float = time.monotonic()
 
     csv_file = None
     csv_writer = None
@@ -177,16 +194,14 @@ async def start_poller() -> None:
     try:
         while True:
             now = time.monotonic()
-            polled_any = False
 
             for pid_obj in PIDS:
-                if not pid_obj.enabled:
+                if not _should_poll(pid_obj):
                     continue
                 last = last_polled.get(pid_obj.name, 0.0)
                 if (now - last) * 1000 < pid_obj.poll_interval_ms:
                     continue
 
-                polled_any = True
                 raw = await _send_and_recv(bus, pid_obj, reader)
                 last_polled[pid_obj.name] = time.monotonic()
 
@@ -207,7 +222,17 @@ async def start_poller() -> None:
                 else:
                     state.latest_values[pid_obj.name] = result
 
-            if state.is_logging and polled_any:
+            # Rows are written on a fixed cadence, not per poll — PIDs with different
+            # intervals drift out of phase, and writing per poll produced ~90 rows/s.
+            row_due = time.monotonic() >= next_row
+            if row_due:
+                # Advance by whole intervals; if a slow poll put us behind, skip ahead
+                # rather than writing a burst of catch-up rows.
+                next_row += row_interval
+                if next_row <= time.monotonic():
+                    next_row = time.monotonic() + row_interval
+
+            if state.is_logging and row_due:
                 if csv_writer is None:
                     csv_file, csv_writer, session_cols = _open_new_csv()
 
@@ -245,9 +270,9 @@ async def start_poller() -> None:
                     csv_writer = None
                     session_cols = None
 
-            # Sleep until the next PID is due. Capped so PID config changes from the
+            # Sleep until the next PID or row is due. Capped so PID config changes from the
             # web UI are picked up promptly; also yields to the web server.
-            await asyncio.sleep(_seconds_until_next_due(last_polled))
+            await asyncio.sleep(_seconds_until_next_due(last_polled, next_row))
 
     finally:
         notifier.stop()

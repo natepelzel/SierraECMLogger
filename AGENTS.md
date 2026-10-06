@@ -223,7 +223,9 @@ for each Pid in PIDS:
     update state.latest_values[pid.name]
     update last_polled[pid.name]
 
-after iterating all PIDs (one sweep) — only if at least one PID was polled:
+skip PIDs the ECM rejected with NRC 0x11/0x12/0x31 (unsupported) until restart
+
+every LOG_INTERVAL_MS (fixed cadence, independent of PID timing):
     build sweep dict: {'ts': time.time(), **state.latest_values}
     if state.is_logging:
         append row to open CSV
@@ -232,11 +234,12 @@ after iterating all PIDs (one sweep) — only if at least one PID was polled:
         if time since last fsync >= FSYNC_INTERVAL_S:
             os.fsync(csv_file.fileno())
 
-sleep until the next enabled PID is due (capped at 100 ms)
+sleep until the next enabled PID or row is due (capped at 100 ms)
 ```
 
-Never loop with `asyncio.sleep(0)` — a sweep with nothing due must not write a row,
-or the loop spins at 100% CPU writing ~12k empty rows/s.
+Never loop with `asyncio.sleep(0)` or write a row per loop iteration — that spun at
+100% CPU writing ~12k empty rows/s. Writing a row whenever any PID was polled also
+fails: PIDs drift out of phase and it produced ~90 rows/s.
 
 ### CSV Behaviour
 
