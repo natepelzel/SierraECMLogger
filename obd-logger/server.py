@@ -16,6 +16,7 @@ from decimation import decimate
 from pids import COLUMN_UNITS, PIDS, PIDS_BY_NAME, save_pid_config
 
 app = FastAPI()
+app.mount('/vendor', StaticFiles(directory='static/vendor'), name='vendor')
 
 _start_time = time.time()
 
