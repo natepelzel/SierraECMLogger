@@ -216,13 +216,14 @@ for each Pid in PIDS:
     if not due (now - last_polled[pid.name] < pid.poll_interval_ms):
         continue
     send build_request(pid) on CAN ID 0x7DF
-    await response with POLL_TIMEOUT_MS timeout, filter on CAN ID 0x7E8
+    await response with POLL_TIMEOUT_MS timeout — bus opened with a kernel filter for
+        CAN ID 0x7E8 only, and the response must echo the requested mode+0x40 / PID bytes
     on timeout: log warning to stderr, continue — never crash the loop
     parse response bytes → value(s)
     update state.latest_values[pid.name]
     update last_polled[pid.name]
 
-after iterating all PIDs (one sweep):
+after iterating all PIDs (one sweep) — only if at least one PID was polled:
     build sweep dict: {'ts': time.time(), **state.latest_values}
     if state.is_logging:
         append row to open CSV
@@ -230,7 +231,12 @@ after iterating all PIDs (one sweep):
         state.new_data_event.set()
         if time since last fsync >= FSYNC_INTERVAL_S:
             os.fsync(csv_file.fileno())
+
+sleep until the next enabled PID is due (capped at 100 ms)
 ```
+
+Never loop with `asyncio.sleep(0)` — a sweep with nothing due must not write a row,
+or the loop spins at 100% CPU writing ~12k empty rows/s.
 
 ### CSV Behaviour
 
@@ -270,15 +276,20 @@ FastAPI application. Import shared state from `state.py`.
 
 ```python
 async def event_stream():
-    last_len = len(state.live_deque)
+    last_seq = state.live_seq
     while True:
         await state.new_data_event.wait()
         state.new_data_event.clear()
-        current = list(state.live_deque)
-        for entry in current[last_len:]:
+        new_count = min(state.live_seq - last_seq, len(state.live_deque))
+        last_seq = state.live_seq
+        if new_count <= 0:
+            continue
+        for entry in list(state.live_deque)[-new_count:]:
             yield f'data: {json.dumps(entry)}\n\n'
-        last_len = len(current)
 ```
+
+Track `state.live_seq` (incremented per append), not `len(live_deque)` — the length
+stops changing once the deque hits `maxlen`, which would freeze the stream.
 
 Use `StreamingResponse` with `media_type='text/event-stream'`.
 
@@ -296,7 +307,10 @@ Return list of objects:
 ]
 ```
 
-Duration: derive from first and last timestamp rows only — do not load the full file.
+Duration: derive from first and last timestamp rows only — do not load the full file
+(read the first data row, then seek to the end and read the last line).
+Define file-reading routes with plain `def` so they run in the threadpool, not on the
+event loop shared with the poller.
 
 ### Session Load (`/sessions/{filename}`)
 
@@ -472,12 +486,13 @@ Description=OBD Logger
 After=network.target
 
 [Service]
-ExecStartPre=/sbin/ip link set can0 up type can bitrate 500000
-ExecStart=/home/pi/obd-env/bin/python /home/pi/obd-logger/main.py
-WorkingDirectory=/home/pi/obd-logger
+ExecStartPre=+-/sbin/ip link set can0 down
+ExecStartPre=+/sbin/ip link set can0 up type can bitrate 500000
+ExecStart=/home/canbus/Documents/Code/SierraECMLogger/venv/bin/python /home/canbus/Documents/Code/SierraECMLogger/obd-logger/main.py
+WorkingDirectory=/home/canbus/Documents/Code/SierraECMLogger/obd-logger
 Restart=on-failure
 RestartSec=5
-User=pi
+User=canbus
 
 [Install]
 WantedBy=multi-user.target

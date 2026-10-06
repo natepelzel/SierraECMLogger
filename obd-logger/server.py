@@ -41,14 +41,16 @@ async def index():
 @app.get('/stream')
 async def stream():
     async def event_stream():
-        last_len = len(state.live_deque)
+        last_seq = state.live_seq
         while True:
             await state.new_data_event.wait()
             state.new_data_event.clear()
-            current = list(state.live_deque)
-            for entry in current[last_len:]:
+            new_count = min(state.live_seq - last_seq, len(state.live_deque))
+            last_seq = state.live_seq
+            if new_count <= 0:
+                continue
+            for entry in list(state.live_deque)[-new_count:]:
                 yield f'data: {json.dumps(entry)}\n\n'
-            last_len = len(current)
 
     return StreamingResponse(event_stream(), media_type='text/event-stream')
 
@@ -108,31 +110,38 @@ async def set_pids(updates: list[_PidUpdate]):
     return {'ok': True}
 
 
+def _row_ts(line: bytes) -> float | None:
+    """Timestamp from a CSV data row — always the first column."""
+    try:
+        return float(line.split(b',', 1)[0])
+    except ValueError:
+        return None
+
+
+def _session_duration(path: Path) -> float | None:
+    """Duration from the first and last data rows only — never reads the whole file."""
+    with open(path, 'rb') as f:
+        f.readline()  # header
+        first_ts = _row_ts(f.readline())
+        if first_ts is None:
+            return None
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - 4096))
+        tail = [ln for ln in f.read().splitlines() if ln.strip()]
+    last_ts = _row_ts(tail[-1]) if tail else None
+    return None if last_ts is None else last_ts - first_ts
+
+
+# Plain `def` (not async) so FastAPI runs file I/O in its threadpool instead of
+# blocking the event loop the CAN poller shares.
 @app.get('/sessions')
-async def list_sessions():
+def list_sessions():
     sessions = []
     for path in sorted(LOG_DIR.glob('*.csv'), reverse=True):
         try:
             stat = path.stat()
             start_time_str = path.stem.replace('_', ' ', 1).replace('-', '/', 2).replace('-', ':')
-            # Derive duration from first and last timestamp rows only
-            duration_seconds = None
-            with open(path, newline='') as f:
-                reader = csv.DictReader(f)
-                first_ts = None
-                last_ts = None
-                for row in reader:
-                    ts_val = row.get('timestamp', '')
-                    if ts_val:
-                        try:
-                            ts = float(ts_val)
-                            if first_ts is None:
-                                first_ts = ts
-                            last_ts = ts
-                        except ValueError:
-                            pass
-            if first_ts is not None and last_ts is not None:
-                duration_seconds = last_ts - first_ts
+            duration_seconds = _session_duration(path)
             sessions.append({
                 'filename': path.name,
                 'start_time': start_time_str,
@@ -145,7 +154,7 @@ async def list_sessions():
 
 
 @app.get('/sessions/{filename}')
-async def load_session(filename: str):
+def load_session(filename: str):
     if filename.endswith('/download'):
         # Shouldn't reach here via normal routing, but guard anyway
         raise HTTPException(status_code=400, detail='Use /download endpoint')

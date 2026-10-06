@@ -3,12 +3,15 @@ Description=OBD Logger
 After=network.target
 
 [Service]
-ExecStartPre=/sbin/ip link set can0 up type can bitrate 500000
-ExecStart=/home/canbus/Documents/Code/SierraECMLogger/venv/bin/python /home/canbus/Documents/Code/SierraECMLogger/main.py
-WorkingDirectory=/home/canbus/Documents/Code/SierraECMLogger
+# '+' runs these as root even though the service runs as canbus; '-' ignores
+# "already down" errors. Bitrate can only be set while the link is down.
+ExecStartPre=+-/sbin/ip link set can0 down
+ExecStartPre=+/sbin/ip link set can0 up type can bitrate 500000
+ExecStart=/home/canbus/Documents/Code/SierraECMLogger/venv/bin/python /home/canbus/Documents/Code/SierraECMLogger/obd-logger/main.py
+WorkingDirectory=/home/canbus/Documents/Code/SierraECMLogger/obd-logger
 Restart=on-failure
 RestartSec=5
-User=pi
+User=canbus
 
 [Install]
 WantedBy=multi-user.target

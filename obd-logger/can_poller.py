@@ -34,8 +34,29 @@ def _open_new_csv() -> tuple[object, csv.DictWriter, list[str]]:
     return f, writer, cols
 
 
+def _is_response_to(raw: bytes, pid_obj) -> bool:
+    """True if a 0x7E8 frame is the positive response to this specific PID request."""
+    if len(raw) < 3 or raw[1] != pid_obj.mode + 0x40:
+        return False
+    if pid_obj.mode == 0x01:
+        return raw[2] == (pid_obj.pid & 0xFF)
+    if pid_obj.mode == 0x22:
+        return len(raw) >= 4 and raw[2] == (pid_obj.pid >> 8) & 0xFF and raw[3] == pid_obj.pid & 0xFF
+    return True
+
+
+def _drain(reader: can.AsyncBufferedReader) -> None:
+    """Discard queued frames, e.g. late responses to requests that already timed out."""
+    while True:
+        try:
+            reader.buffer.get_nowait()
+        except asyncio.QueueEmpty:
+            return
+
+
 async def _send_and_recv(bus: can.BusABC, pid_obj, reader: can.AsyncBufferedReader) -> bytes | None:
     """Send an OBD request and await the matching response frame."""
+    _drain(reader)
     request = build_request(pid_obj)
     msg = can.Message(arbitration_id=OBD_REQUEST_ID, data=request, is_extended_id=False)
     try:
@@ -55,7 +76,7 @@ async def _send_and_recv(bus: can.BusABC, pid_obj, reader: can.AsyncBufferedRead
         except asyncio.TimeoutError:
             print(f'[poller] timeout waiting for response to {pid_obj.name}', file=sys.stderr)
             return None
-        if resp.arbitration_id == OBD_RESPONSE_ID:
+        if resp.arbitration_id == OBD_RESPONSE_ID and _is_response_to(resp.data, pid_obj):
             return bytes(resp.data)
 
 
@@ -70,6 +91,18 @@ def _extract_data_bytes(raw: bytes, pid_obj) -> bytes:
     return raw
 
 
+MAX_IDLE_SLEEP_S = 0.1
+
+
+def _seconds_until_next_due(last_polled: dict[str, float]) -> float:
+    now = time.monotonic()
+    waits = [
+        last_polled.get(p.name, 0.0) + p.poll_interval_ms / 1000.0 - now
+        for p in PIDS if p.enabled
+    ]
+    return max(0.0, min(waits + [MAX_IDLE_SLEEP_S]))
+
+
 async def start_poller() -> None:
     last_polled: dict[str, float] = {}
     last_fsync: float = time.monotonic()
@@ -82,7 +115,12 @@ async def start_poller() -> None:
         csv_file, csv_writer, session_cols = _open_new_csv()
 
     try:
-        bus = can.interface.Bus(channel=CAN_INTERFACE, bustype='socketcan')
+        # Kernel-side filter: only ECM responses reach the reader, not all HS-CAN broadcast traffic
+        bus = can.interface.Bus(
+            channel=CAN_INTERFACE,
+            interface='socketcan',
+            can_filters=[{'can_id': OBD_RESPONSE_ID, 'can_mask': 0x7FF, 'extended': False}],
+        )
     except Exception as e:
         print(f'[poller] Failed to open CAN bus: {e}', file=sys.stderr)
         return
@@ -93,6 +131,7 @@ async def start_poller() -> None:
     try:
         while True:
             now = time.monotonic()
+            polled_any = False
 
             for pid_obj in PIDS:
                 if not pid_obj.enabled:
@@ -101,6 +140,7 @@ async def start_poller() -> None:
                 if (now - last) * 1000 < pid_obj.poll_interval_ms:
                     continue
 
+                polled_any = True
                 raw = await _send_and_recv(bus, pid_obj, reader)
                 last_polled[pid_obj.name] = time.monotonic()
 
@@ -121,7 +161,7 @@ async def start_poller() -> None:
                 else:
                     state.latest_values[pid_obj.name] = result
 
-            if state.is_logging:
+            if state.is_logging and polled_any:
                 if csv_writer is None:
                     csv_file, csv_writer, session_cols = _open_new_csv()
 
@@ -136,6 +176,7 @@ async def start_poller() -> None:
 
                 csv_writer.writerow(sweep)
                 state.live_deque.append(live_entry)
+                state.live_seq += 1
                 state.new_data_event.set()
 
                 now_mono = time.monotonic()
@@ -145,7 +186,7 @@ async def start_poller() -> None:
                     except OSError:
                         pass
                     last_fsync = now_mono
-            else:
+            elif not state.is_logging:
                 # Not logging — close any open CSV, keep polling for latest_values
                 if csv_file is not None:
                     try:
@@ -158,8 +199,9 @@ async def start_poller() -> None:
                     csv_writer = None
                     session_cols = None
 
-            # Small yield to allow other coroutines to run between sweeps
-            await asyncio.sleep(0)
+            # Sleep until the next PID is due. Capped so PID config changes from the
+            # web UI are picked up promptly; also yields to the web server.
+            await asyncio.sleep(_seconds_until_next_due(last_polled))
 
     finally:
         notifier.stop()
