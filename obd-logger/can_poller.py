@@ -14,9 +14,10 @@ from config import (
     CAN_INTERFACE,
     FSYNC_INTERVAL_S,
     LOG_DIR,
+    OBD_REQUEST_ID,
     POLL_TIMEOUT_MS,
 )
-from pids import PIDS, OBD_REQUEST_ID, OBD_RESPONSE_ID, build_request
+from pids import PIDS, OBD_RESPONSE_ID, build_request
 
 
 def _active_columns() -> list[str]:
@@ -43,6 +44,41 @@ def _is_response_to(raw: bytes, pid_obj) -> bool:
     if pid_obj.mode == 0x22:
         return len(raw) >= 4 and raw[2] == (pid_obj.pid >> 8) & 0xFF and raw[3] == pid_obj.pid & 0xFF
     return True
+
+
+NEGATIVE_RESPONSE = 0x7F
+NRC_RESPONSE_PENDING = 0x78
+NRC_NAMES = {
+    0x11: 'serviceNotSupported',
+    0x12: 'subFunctionNotSupported',
+    0x13: 'incorrectMessageLength',
+    0x22: 'conditionsNotCorrect',
+    0x31: 'requestOutOfRange',
+    0x33: 'securityAccessDenied',
+}
+
+# (pid name, NRC) pairs already logged — avoids repeating the same rejection every poll
+_logged_rejections: set[tuple[str, int]] = set()
+
+
+def _is_rejection_of(raw: bytes, pid_obj) -> bool:
+    """True if a 0x7E8 frame is a negative response to this PID's mode.
+
+    Layout: [len, 0x7F, requested_mode, NRC]. Negative responses don't echo the PID,
+    so this matches on mode only — safe because only one request is in flight.
+    """
+    return len(raw) >= 4 and raw[1] == NEGATIVE_RESPONSE and raw[2] == pid_obj.mode
+
+
+def _log_rejection(pid_obj, nrc: int) -> None:
+    if (pid_obj.name, nrc) in _logged_rejections:
+        return
+    _logged_rejections.add((pid_obj.name, nrc))
+    print(
+        f'[poller] ECM rejected {pid_obj.name} (mode {pid_obj.mode:02X} PID {pid_obj.pid:#06x}): '
+        f'NRC {nrc:#04x} {NRC_NAMES.get(nrc, "unknown")} (logged once per PID)',
+        file=sys.stderr,
+    )
 
 
 def _drain(reader: can.AsyncBufferedReader) -> None:
@@ -76,8 +112,16 @@ async def _send_and_recv(bus: can.BusABC, pid_obj, reader: can.AsyncBufferedRead
         except asyncio.TimeoutError:
             print(f'[poller] timeout waiting for response to {pid_obj.name}', file=sys.stderr)
             return None
-        if resp.arbitration_id == OBD_RESPONSE_ID and _is_response_to(resp.data, pid_obj):
+        if resp.arbitration_id != OBD_RESPONSE_ID:
+            continue
+        if _is_response_to(resp.data, pid_obj):
             return bytes(resp.data)
+        if _is_rejection_of(resp.data, pid_obj):
+            nrc = resp.data[3]
+            if nrc == NRC_RESPONSE_PENDING:
+                continue  # ECM is still working on it; keep waiting until the deadline
+            _log_rejection(pid_obj, nrc)
+            return None
 
 
 def _extract_data_bytes(raw: bytes, pid_obj) -> bytes:
@@ -125,6 +169,8 @@ async def start_poller() -> None:
         print(f'[poller] Failed to open CAN bus: {e}', file=sys.stderr)
         return
 
+    print(f'[poller] sending requests to {OBD_REQUEST_ID:#05x}, listening on {OBD_RESPONSE_ID:#05x}',
+          file=sys.stderr)
     reader = can.AsyncBufferedReader()
     notifier = can.Notifier(bus, [reader], loop=asyncio.get_event_loop())
 

@@ -23,8 +23,7 @@ class Pid:
 
 # ── Request Frame Construction ────────────────────────────────────────────────
 
-OBD_REQUEST_ID = 0x7DF
-OBD_RESPONSE_ID = 0x7E8
+OBD_RESPONSE_ID = 0x7E8  # request ID is configurable — see config.OBD_REQUEST_ID
 
 
 def build_request(pid: Pid) -> bytes:

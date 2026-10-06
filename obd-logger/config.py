@@ -3,6 +3,11 @@ from pathlib import Path
 CAN_INTERFACE             = 'can0'
 CAN_BITRATE               = 500_000     # LMM Duramax HS-CAN
 
+# 0x7DF = functional (broadcast to all emissions ECUs); 0x7E0 = physical (ECM only).
+# GM mode 22 PIDs are conventionally requested physically, and ECUs may stay silent
+# instead of sending a negative response to functional requests.
+OBD_REQUEST_ID            = 0x7DF
+
 LOG_DIR                   = Path(__file__).parent / 'logs'
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
