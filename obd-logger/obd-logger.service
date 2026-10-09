@@ -3,7 +3,7 @@ Description=OBD Logger
 After=network.target
 
 [Service]
-ExecStartPre=/sbin/ip link set can0 up type can bitrate 500000
+ExecStartPre=+/bin/sh -c '/sbin/ip link set can0 down; /sbin/ip link set can0 up type can bitrate 500000 restart-ms 100'
 ExecStart=/home/canbus/Documents/Code/SierraECMLogger/venv/bin/python /home/canbus/Documents/Code/SierraECMLogger/main.py
 WorkingDirectory=/home/canbus/Documents/Code/SierraECMLogger
 Restart=on-failure

@@ -119,12 +119,17 @@ async def probe():
     setup_can()
 
     try:
-        bus = can.interface.Bus(channel=CAN_INTERFACE, bustype='socketcan')
+        # Only ECM replies reach Python — unfiltered broadcast traffic backs up the queue
+        bus = can.interface.Bus(
+            channel=CAN_INTERFACE,
+            interface='socketcan',
+            can_filters=[{'can_id': OBD_RESPONSE_ID, 'can_mask': 0x7FF, 'extended': False}],
+        )
     except Exception as e:
         sys.exit(f'[probe] Failed to open CAN bus: {e}')
 
     reader = can.AsyncBufferedReader()
-    notifier = can.Notifier(bus, [reader], loop=asyncio.get_event_loop())
+    notifier = can.Notifier(bus, [reader], loop=asyncio.get_running_loop())
 
     responding = []
     no_response = []
@@ -136,6 +141,8 @@ async def probe():
         request = build_request(mode, pid)
         msg = can.Message(arbitration_id=OBD_REQUEST_ID, data=request, is_extended_id=False)
 
+        while not reader.buffer.empty():   # drop late replies to the previous PID
+            reader.buffer.get_nowait()
         try:
             bus.send(msg)
         except can.CanError as e:

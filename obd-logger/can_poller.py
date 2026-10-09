@@ -34,8 +34,25 @@ def _open_new_csv() -> tuple[object, csv.DictWriter, list[str]]:
     return f, writer, cols
 
 
+def _drain(reader: can.AsyncBufferedReader) -> None:
+    """Discard any queued frames (late replies to earlier requests)."""
+    while not reader.buffer.empty():
+        reader.buffer.get_nowait()
+
+
+def _matches_request(data: bytes, pid_obj) -> bool:
+    """True if a 0x7E8 single frame is the positive response to this request."""
+    if pid_obj.mode == 0x01:
+        return len(data) >= 3 and data[1] == 0x41 and data[2] == (pid_obj.pid & 0xFF)
+    if pid_obj.mode == 0x22:
+        return (len(data) >= 4 and data[1] == 0x62
+                and data[2] == ((pid_obj.pid >> 8) & 0xFF) and data[3] == (pid_obj.pid & 0xFF))
+    return False
+
+
 async def _send_and_recv(bus: can.BusABC, pid_obj, reader: can.AsyncBufferedReader) -> bytes | None:
     """Send an OBD request and await the matching response frame."""
+    _drain(reader)
     request = build_request(pid_obj)
     msg = can.Message(arbitration_id=OBD_REQUEST_ID, data=request, is_extended_id=False)
     try:
@@ -55,8 +72,17 @@ async def _send_and_recv(bus: can.BusABC, pid_obj, reader: can.AsyncBufferedRead
         except asyncio.TimeoutError:
             print(f'[poller] timeout waiting for response to {pid_obj.name}', file=sys.stderr)
             return None
-        if resp.arbitration_id == OBD_RESPONSE_ID:
-            return bytes(resp.data)
+        if resp.arbitration_id != OBD_RESPONSE_ID:
+            continue
+        data = bytes(resp.data)
+        # Negative response: [len, 0x7F, service, NRC] — 0x78 means "pending, keep waiting"
+        if len(data) >= 4 and data[1] == 0x7F and data[2] == pid_obj.mode:
+            if data[3] == 0x78:
+                continue
+            print(f'[poller] negative response for {pid_obj.name}: NRC {data[3]:#04x}', file=sys.stderr)
+            return None
+        if _matches_request(data, pid_obj):
+            return data
 
 
 def _extract_data_bytes(raw: bytes, pid_obj) -> bytes:
@@ -82,13 +108,19 @@ async def start_poller() -> None:
         csv_file, csv_writer, session_cols = _open_new_csv()
 
     try:
-        bus = can.interface.Bus(channel=CAN_INTERFACE, bustype='socketcan')
+        # Kernel-side filter: only ECM replies reach Python. Without it every broadcast
+        # frame on HS-CAN (~1-2k/s) is queued and replies get stuck behind the backlog.
+        bus = can.interface.Bus(
+            channel=CAN_INTERFACE,
+            interface='socketcan',
+            can_filters=[{'can_id': OBD_RESPONSE_ID, 'can_mask': 0x7FF, 'extended': False}],
+        )
     except Exception as e:
         print(f'[poller] Failed to open CAN bus: {e}', file=sys.stderr)
         return
 
     reader = can.AsyncBufferedReader()
-    notifier = can.Notifier(bus, [reader], loop=asyncio.get_event_loop())
+    notifier = can.Notifier(bus, [reader], loop=asyncio.get_running_loop())
 
     try:
         while True:
